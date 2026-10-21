@@ -1,3 +1,4 @@
+import { writeAuthConfigFile } from "@cloudflare/workers-auth/cf";
 import {
 	mockConsoleMethods,
 	runInTempDir,
@@ -60,5 +61,36 @@ describe("cf auth whoami", () => {
 				{ id: "account-3", name: "Account Three" },
 			],
 		});
+	});
+	it("retains raw granted scopes in the default JSON output", async () => {
+		writeAuthConfigFile(
+			{
+				oauth_token: "oauth-test-token",
+				expiration_time: "2999-01-01T00:00:00.000Z",
+				scopes: ["dns.write", "dns.read", "openid"],
+			},
+			"default"
+		);
+		server.use(
+			http.get("*/user", () =>
+				HttpResponse.json({
+					success: true,
+					result: { email: "user@example.com" },
+				})
+			)
+		);
+
+		await runCf(["auth", "whoami"], {
+			CLOUDFLARE_API_BASE_URL: TEST_BASE_URL,
+		});
+
+		const result = JSON.parse(std.out);
+		expect(result).toMatchObject({
+			authenticated: true,
+			scopes: ["dns.write", "dns.read", "openid"],
+			email: "user@example.com",
+		});
+		expect(result).not.toHaveProperty("scopeGroups");
+		expect(result).not.toHaveProperty("scopeCount");
 	});
 });

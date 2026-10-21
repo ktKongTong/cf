@@ -1,5 +1,7 @@
+import { DefaultScopeKeys } from "@cloudflare/workers-auth/cf";
 import { detectAgentContext } from "../../lib/agent-context.js";
 import { getAuthToken } from "../../lib/auth-token.js";
+import { isNonInteractiveOrCI } from "../../lib/interactive.js";
 import {
 	fetchAuthorizedAccounts,
 	getConfigPath,
@@ -7,6 +9,7 @@ import {
 } from "../../lib/oauth/index.js";
 import { formatOutput } from "../../lib/output.js";
 import { hint } from "../../lib/ui/index.js";
+import { groupGrantedScopes, renderGrantedScopes } from "./scope-display.js";
 import type { CommandModule } from "yargs";
 
 const whoamiCommand: CommandModule = {
@@ -87,12 +90,51 @@ const whoamiCommand: CommandModule = {
 			accounts,
 		};
 
+		// Preserve the existing structured output, including the full scope list.
 		if (stored?.oauth_token) {
 			output.scopes = stored.scopes;
 			output.expiresAt = stored.expiration_time;
 		}
 
-		formatOutput(output);
+		// Keep the existing JSON contract for scripts, pipes, and agent invocations.
+		// In a real terminal, present the same information in a readable layout.
+		if (isNonInteractiveOrCI() || detectAgentContext().isAgentic) {
+			formatOutput(output);
+			return;
+		}
+
+		const lines = [
+			userEmail ? `Signed in as ${userEmail}` : "Authenticated",
+			`Authentication: ${authSource}`,
+			`Token valid: ${tokenValid ? "yes" : "unverified"}`,
+		];
+
+		if (accounts.length > 0) {
+			lines.push(
+				"",
+				`Accounts (${accounts.length}):`,
+				...accounts.map((account) => `  ${account.name} (${account.id})`)
+			);
+		}
+
+		if (stored?.oauth_token && !envToken) {
+			if (stored.expiration_time) {
+				lines.push(
+					"",
+					`Token expires: ${new Date(stored.expiration_time).toLocaleString()}`
+				);
+			}
+			if (stored.scopes) {
+				lines.push(
+					"",
+					renderGrantedScopes(
+						groupGrantedScopes(stored.scopes, DefaultScopeKeys)
+					)
+				);
+			}
+		}
+
+		console.log(lines.join("\n"));
 	},
 };
 
